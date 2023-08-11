@@ -9,6 +9,9 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import os
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"using device {device}")
+
 
 def main():
     csv_path = os.path.join(os.getcwd(), 'data', 'HIV.csv')
@@ -32,6 +35,7 @@ def main():
     print("Train Test Split Finished")
 
     model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels = num_classes)
+    model.to(device)
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     print("Model and Tokenizer Initialized")
 
@@ -76,6 +80,11 @@ def main():
         total_samples = 0
         for batch_input_ids, batch_attention_masks, batch_labels in train_loader:
             optimizer.zero_grad()
+
+            batch_input_ids = batch_input_ids.to(device)
+            batch_attention_masks = batch_attention_masks.to(device)
+            batch_labels = batch_labels.to(device)  
+
             outputs = model(batch_input_ids, attention_mask=batch_attention_masks)
             predicted_labels = outputs.logits.argmax(dim=1)
             total_loss = 0.0
