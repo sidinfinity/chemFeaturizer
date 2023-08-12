@@ -64,10 +64,9 @@ def main():
     with torch.no_grad():
         for batch_input_ids, batch_attention_masks, batch_labels in test_loader:
 
-            batch_input_ids = batch_input_ids.to(device)
-            batch_attention_masks = batch_attention_masks.to(device)
-            batch_labels = batch_labels.to(device)  
 
+
+            
             outputs = model(batch_input_ids, attention_mask=batch_attention_masks)
             predicted_labels = (outputs.logits > 0.5).float()  # Threshold logits for binary classification
 

@@ -1,5 +1,3 @@
-#!/usr/bin/python3
-
 import pandas as pd
 from sklearn.model_selection import train_test_split
 import torch
@@ -12,21 +10,20 @@ import os
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"using device {device}")
 
+from data.HIV_data import load_HIV
+
 
 def main():
-    csv_path = os.path.join(os.getcwd(), 'data', 'HIV.csv')
-    df = pd.read_csv(csv_path)
-    print("Data Loaded")
-    del df['activity'] # removing the name of the molecule since that doesn't matter
-    df.replace({'true': 1, 'false': 0}, inplace=True)
-    df.fillna(-1, inplace=True) #changing "Nan" to -1
+    labels, df = load_HIV()
+    print(labels)
+    print("Data Loaded and Preprocessing Finished")
 
-    num_classes = len(df.columns) - 1
+    num_classes = 2
+    num_labels = len(df.columns) - 1
     max_sequence_length = df['smiles'].apply(len).max()
-    #print(df.head())
     #print(vocab_size)
     batch_size = 32
-    num_epochs = 10
+    num_epochs = 1
     learning_rate = 0.001
 
 
@@ -34,7 +31,7 @@ def main():
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
     print("Train Test Split Finished")
 
-    model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels = num_classes)
+    model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels = num_labels)
     model.to(device)
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
     print("Model and Tokenizer Initialized")
@@ -62,16 +59,10 @@ def main():
     # Define optimizer and loss function
     optimizer = optim.AdamW(model.parameters(), lr=learning_rate)
     criterion = torch.nn.CrossEntropyLoss()
-    label_columns = list(df.columns)
-    label_columns.remove("smiles")
 
-    label_accuracies = {label: 0.0 for label in label_columns}
-    label_sample_counts = {label: 0 for label in label_columns}
+    label_accuracies = {label: 0.0 for label in labels}
+    label_sample_counts = {label: 0 for label in labels}
 
-    """
-    Cross Entropy Loss instead of BCE
-    Calculate Loss for each column inside a loop
-    """
     # Training loop
 
     print("STARTING TRAINING")
@@ -86,32 +77,46 @@ def main():
             batch_labels = batch_labels.to(device)  
 
             outputs = model(batch_input_ids, attention_mask=batch_attention_masks)
-            predicted_labels = outputs.logits.argmax(dim=1)
-            total_loss = 0.0
+            logits = outputs.logits
 
-            for label_idx, label in enumerate(label_columns):
-                correct_labels = (predicted_labels == batch_labels[:, label_idx]).sum().item() #calculates the sum of "true" in the created tensor
-                label_accuracies[label] += correct_labels
-                label_sample_counts[label] += len(batch_labels)
+            batch_loss = 0.0
+            for logit_idx in range(len(logits)):
+                logit_loss = 0.0
+                for i in range(0, num_labels, num_classes):
+                    subarray_logits = logits[logit_idx]
+                    subarray_logits = subarray_logits[i: i + num_classes]
 
-                column_predictions = outputs.logits[:, label_idx]  # Predictions for this column
-                column_labels = batch_labels[:, label_idx]  # True labels for this column
-                loss = criterion(column_predictions, column_labels)
-                total_loss += loss
+                    best_class = np.argmax(subarray_logits.detach().numpy(), axis=-1)
+                    subarray_logits[best_class] = 1
+                    for arg in range(len(subarray_logits)):
+                        if arg == best_class:
+                            continue
+                        subarray_logits[arg] = 0
+                    
+                    subarray_labels = batch_labels[logit_idx][i: i + num_classes]
 
+                    loss = criterion(subarray_logits, subarray_labels)
+                    logit_loss += loss
 
-            print(f"Epoch {epoch+1}/{num_epochs} - Batch Loss: {total_loss:.4f}")
-            loss.backward()
+                    #Calculating accuracy
+                    temp = int((i)/num_classes)
+                    label_sample_counts[labels[temp]] += 1.0
+                    if subarray_labels[best_class] == 1:
+                        label_accuracies[labels[temp]] += 1.0
+                batch_loss += logit_loss
+            print(f"Batch Loss: {batch_loss}")
+
+            for label in labels:
+                print(f"Accuracy for {label}: {label_accuracies[label]/label_sample_counts[label]}")
+            
+            
+            batch_loss.backward()
             optimizer.step()
-        
-        for label in label_columns:
-            label_accuracy = label_accuracies[label] / label_sample_counts[label]
-            print(f"Accuracy for {label}: {label_accuracy:.4f}")
 
-    # Example SMILES string
-    torch.save(model.state_dict(), os.path.join(os.getcwd(), 'models', 'HIV.pth'))
+            label_accuracies = {label: 0.0 for label in labels}
+            label_sample_counts = {label: 0 for label in labels}
+
+    torch.save(model.state_dict(), os.path.join(os.getcwd(), 'models', 'tox21.pth'))
 
 if __name__ == "__main__":
     main()
-
-
