@@ -9,18 +9,17 @@ from torch.utils.data import TensorDataset, DataLoader
 import numpy as np
 import os
 
+from data.HIV_data import load_HIV
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"using device {device}")
 
 def main():
-    df = pd.read_csv(os.path.join(os.getcwd(), "data", "tox21.csv"))
-
-    del df['mol_id']
-    df.replace({'true': 1, 'false': 0}, inplace=True)
-    df.fillna(-1, inplace=True)
+    labels, df = load_HIV()
 
     # Define constants
-    num_classes = len(df.columns) - 1  # Number of labels excluding the text column
+    num_labels = len(df.columns) - 1
+    num_classes = 2 # Number of labels excluding the text column
     max_sequence_length = df['smiles'].apply(len).max()
     batch_size = 32 
 
@@ -28,7 +27,7 @@ def main():
     train_df, test_df = train_test_split(df, test_size=0.2, random_state=42)
 
     # Initialize BERT model and tokenizer
-    model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=num_classes)
+    model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=num_labels)
     model.to(device)
     tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
@@ -51,31 +50,47 @@ def main():
     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     # Load the saved model
-    model.load_state_dict(torch.load(os.path.join(os.getcwd(), "models", "tox21.pth")))
+    model.load_state_dict(torch.load(os.path.join(os.getcwd(), "models", "HIV.pth")))
     model.eval()
 
     # Test the model
-    label_columns = list(df.columns)
-    label_columns.remove("smiles")
-
-    label_accuracies = {label: 0.0 for label in label_columns}
-    label_sample_counts = {label: 0 for label in label_columns}
+    label_accuracies = {label: 0.0 for label in labels}
+    label_sample_counts = {label: 0 for label in labels}
 
     with torch.no_grad():
         for batch_input_ids, batch_attention_masks, batch_labels in test_loader:
-
-
-
             
             outputs = model(batch_input_ids, attention_mask=batch_attention_masks)
             predicted_labels = (outputs.logits > 0.5).float()  # Threshold logits for binary classification
 
-            for label_idx, label in enumerate(label_columns):
-                label_accuracy = (predicted_labels[:, label_idx] == batch_labels[:, label_idx]).sum().item()
-                label_accuracies[label] += label_accuracy
-                label_sample_counts[label] += len(batch_labels)
+            batch_input_ids = batch_input_ids.to(device)
+            batch_attention_masks = batch_attention_masks.to(device)
+            batch_labels = batch_labels.to(device)  
 
-    for label in label_columns:
+            outputs = model(batch_input_ids, attention_mask=batch_attention_masks)
+            logits = outputs.logits
+
+            for logit_idx in range(len(logits)):
+                for i in range(0, num_labels, num_classes):
+                    subarray_logits = logits[logit_idx]
+                    subarray_logits = subarray_logits[i: i + num_classes]
+
+                    best_class = np.argmax(subarray_logits.detach().numpy(), axis=-1)
+                    subarray_logits[best_class] = 1
+                    for arg in range(len(subarray_logits)):
+                        if arg == best_class:
+                            continue
+                        subarray_logits[arg] = 0
+                    
+                    subarray_labels = batch_labels[logit_idx][i: i + num_classes]
+
+                    #Calculating accuracy
+                    temp = int((i)/num_classes)
+                    label_sample_counts[labels[temp]] += 1.0
+                    if subarray_labels[best_class] == 1:
+                        label_accuracies[labels[temp]] += 1.0
+
+    for label in labels:
         label_accuracy = label_accuracies[label] / label_sample_counts[label]
         print(f"Accuracy for {label}: {label_accuracy:.4f}")
 

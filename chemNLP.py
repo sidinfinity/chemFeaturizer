@@ -110,6 +110,7 @@ def main():
                 print(f"Accuracy for {label}: {label_accuracies[label]/label_sample_counts[label]}")
             
             
+            
             batch_loss.backward()
             optimizer.step()
 
